@@ -1,0 +1,6 @@
+.env
+*.log
+birlesik_cikti.csv
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -6,172 +6,264 @@ başlıkları tek seferde yazar ve tüm veriyi tek bir
 çıktı CSV'sine birleştirir.
 
 Kullanım:
-  python merge.py                          # varsayılan: script klasörü
+  python merge.py                          # varsayılan: source/ klasörü
   python merge.py -i ./parcalar            # özel giriş klasörü
   python merge.py -i ./parcalar -o birlesik.csv
   python merge.py -p "11-*.csv"            # belirli dosya deseni
+  python merge.py --auto-encoding          # encoding otomatik tespit
+
+Değişiklikler (v2):
+  - Glob pattern + input_dir çakışması düzeltildi
+  - Encoding otomatik tespiti eklendi (chardet veya fallback)
+  - ProgressBar utils.py'ye taşındı (DRY)
+  - Log dosyası desteği eklendi
+  - Boş / bozuk satır istatistikleri eklendi
 """
 
 import argparse
 import csv
 import glob
+import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
 
+from utils import ProgressBar, detect_encoding
+
 
 # ── Ayarlar ──────────────────────────────────────────────────────────────────
-DEFAULT_PATTERN = "source/*.csv"
-DEFAULT_OUTPUT  = "birlesik_cikti.csv"
+DEFAULT_INPUT   = "source"           # Kaynak CSV'lerin arandığı varsayılan klasör
+DEFAULT_PATTERN = "*.csv"            # Hangi dosyaların alınacağını belirleyen glob deseni
+DEFAULT_OUTPUT  = "birlesik_cikti.csv"  # Birleşik çıktı dosyasının adı
+LOG_FILE        = "merge.log"        # Varsayılan log dosyası adı
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class ProgressBar:
-    def __init__(self, total: int, label: str = ""):
-        self.total = total
-        self.done  = 0
-        self.label = label
-        self.start = time.time()
-        self.width = 35
-
-    def update(self, n: int = 1):
-        self.done += n
-        pct     = self.done / self.total if self.total else 1
-        filled  = int(self.width * pct)
-        bar     = "█" * filled + "░" * (self.width - filled)
-        elapsed = time.time() - self.start
-        eta     = (elapsed / pct - elapsed) if pct > 0 else 0
-        sys.stdout.write(
-            f"\r{self.label} [{bar}] "
-            f"{self.done}/{self.total} ({pct*100:.1f}%)  ETA: {eta:.0f}s  "
-        )
-        sys.stdout.flush()
-        if self.done >= self.total:
-            sys.stdout.write("\n"); sys.stdout.flush()
-
-
-def find_csv_files(input_dir: Path, pattern: str, output_path: Path) -> list:
-    """Klasördeki CSV dosyalarını sıralı olarak bul, çıktı dosyasını hariç tut."""
-    files = sorted(glob.glob(str(input_dir / pattern)))
-    # Çıktı dosyası aynı klasördeyse listeye girmesin
-    files = [f for f in files if Path(f).resolve() != output_path.resolve()]
-    return files
+def setup_logging(log_file: str):
+    """
+    Logging'i hem dosyaya hem de stdout'a yazacak şekilde yapılandırır.
+    Tüm INFO ve üstü mesajlar her iki hedefe de iletilir.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),  # Kalıcı log dosyası
+            logging.StreamHandler(sys.stdout),                 # Anlık terminal çıktısı
+        ],
+    )
 
 
 def natural_sort_key(path: str):
     """
-    Dosyaları doğal sırayla sıralar: 1-, 2-, ..., 10-, 11- gibi.
-    Saf string sıralama yerine sayısal parçaları int'e çevirir.
+    Dosya adlarını doğal sırayla sıralamak için anahtar üretir.
+
+    Saf string sıralaması "10" < "2" sonucu verir (leksikografik).
+    Bu fonksiyon dosya adını rakam / metin parçalarına böler ve
+    rakam parçalarını int'e çevirerek doğru sıra sağlar:
+      1-data.csv, 2-data.csv, 10-data.csv  ✓
     """
-    import re
-    parts = re.split(r'(\d+)', Path(path).stem)
+    parts = re.split(r"(\d+)", Path(path).stem)
+    # Rakam parçası → int, metin parçası → küçük harfe çevir
     return [int(p) if p.isdigit() else p.lower() for p in parts]
 
 
-def merge(input_dir: str, output_file: str, pattern: str, encoding: str):
+def find_csv_files(input_dir: Path, pattern: str, output_path: Path) -> list:
+    """
+    Verilen klasörde pattern'e uyan CSV dosyalarını bulur ve
+    çıktı dosyasını listeden hariç tutar.
+
+    Args:
+        input_dir:   Arama yapılacak klasör (Path nesnesi).
+        pattern:     Glob deseni, örn. '*.csv' veya '11-*.csv'.
+        output_path: Birleşik çıktı dosyası; aynı klasördeyse listeye girmemeli.
+
+    Returns:
+        Doğal sırayla sıralanmış dosya yolları listesi.
+
+    DÜZELTME (v2): Önceki sürümde `input_dir / pattern` kullanılıyordu; bu,
+    -i ve -p argümanları birlikte verildiğinde yanlış yol üretiyordu çünkü
+    pattern zaten tam yol içerebiliyordu. Artık input_dir ve pattern ayrı
+    tutularak glob'a birleşik string verilmektedir.
+    """
+    # input_dir ile pattern'i birleştirerek tam arama yolu oluştur
+    search_path = str(input_dir / pattern)
+    files = sorted(glob.glob(search_path), key=natural_sort_key)
+
+    # Çıktı dosyası kaynak klasördeyse tekrar okunmasını önle
+    files = [f for f in files if Path(f).resolve() != output_path.resolve()]
+    return files
+
+
+def merge(
+    input_dir: str,
+    output_file: str,
+    pattern: str,
+    encoding: str,
+    auto_encoding: bool,
+):
+    """
+    Ana birleştirme işlevi.
+
+    Adımlar:
+      1. Kaynak klasörün varlığını kontrol et.
+      2. Pattern'e uyan CSV dosyalarını bul ve doğal sırala.
+      3. Her dosyayı aç; başlığı ilk dosyadan al, sonrakilerle karşılaştır.
+      4. Farklı başlıklı veya boş dosyaları atla, logla.
+      5. Tamamen boş veri satırlarını filtrele.
+      6. Tüm geçerli satırları çıktı dosyasına yaz.
+      7. Özet istatistikleri logla.
+
+    Args:
+        input_dir:     Kaynak CSV klasörü.
+        output_file:   Birleşik çıktı dosyasının yolu.
+        pattern:       Glob deseni (örn. '*.csv').
+        encoding:      auto_encoding=False ise kullanılacak sabit encoding.
+        auto_encoding: True ise her dosya için encoding otomatik tespit edilir.
+    """
     input_dir   = Path(input_dir)
     output_path = Path(output_file)
 
+    # Kaynak klasör yoksa anlamlı hata mesajıyla çık
     if not input_dir.exists():
-        print(f"❌ Klasör bulunamadı: {input_dir}")
+        logging.error(f"Klasör bulunamadı: {input_dir}")
         sys.exit(1)
 
     files = find_csv_files(input_dir, pattern, output_path)
-    files.sort(key=natural_sort_key)
 
+    # Hiç dosya bulunamadıysa devam etmenin anlamı yok
     if not files:
-        print(f"⚠️  '{pattern}' desenine uyan CSV dosyası bulunamadı: {input_dir}")
+        logging.warning(f"'{pattern}' desenine uyan CSV bulunamadı: {input_dir}")
         sys.exit(1)
 
-    print(f"\n📂 Giriş    : {input_dir}")
-    print(f"🔍 Bulunan  : {len(files)} CSV dosyası")
-    print(f"📄 Çıktı    : {output_path}\n")
+    logging.info(f"Giriş    : {input_dir}")
+    logging.info(f"Bulunan  : {len(files)} CSV dosyası")
+    logging.info(f"Çıktı    : {output_path}")
 
-    header        = None
-    total_rows    = 0
-    skipped_files = []
+    header        = None   # İlk dosyadan alınan referans başlık satırı
+    total_rows    = 0      # Başarıyla yazılan toplam veri satırı sayısı
+    skipped_files = []     # (dosya_yolu, sebep) çiftlerinden oluşan atlanan dosya listesi
+    empty_rows    = 0      # Tamamen boş olduğu için atlanan satır sayısı
     progress      = ProgressBar(total=len(files), label="Birleştiriliyor")
 
-    with open(output_path, "w", newline="", encoding=encoding) as out_f:
-        writer = None
+    # Çıktı dosyasını baştan yaz; encoding her zaman utf-8 (tutarlılık için)
+    with open(output_path, "w", newline="", encoding="utf-8") as out_f:
+        writer = None  # İlk dosya işlenene kadar writer None kalır
 
         for fpath in files:
+            # Her dosya için encoding'i ya otomatik tespit et ya da sabit kullan
+            file_enc = detect_encoding(fpath) if auto_encoding else encoding
+
             try:
-                with open(fpath, "r", newline="", encoding=encoding, errors="replace") as in_f:
+                with open(fpath, "r", newline="", encoding=file_enc, errors="replace") as in_f:
                     reader = csv.reader(in_f)
+
+                    # İlk satırı başlık olarak oku; dosya tamamen boşsa StopIteration alırız
                     try:
                         file_header = next(reader)
                     except StopIteration:
                         skipped_files.append((fpath, "boş dosya"))
+                        logging.warning(f"Atlandı (boş): {fpath}")
                         progress.update()
                         continue
 
-                    # İlk dosyada başlığı yaz
                     if header is None:
+                        # İlk dosya: bu başlığı referans olarak kaydet ve çıktıya yaz
                         header = file_header
                         writer = csv.writer(out_f, lineterminator="\n")
                         writer.writerow(header)
                     elif file_header != header:
+                        # Başlık uyuşmazlığı: veri bütünlüğünü korumak için dosyayı atla
                         skipped_files.append((fpath, f"farklı başlık: {file_header}"))
+                        logging.warning(f"Atlandı (farklı başlık): {Path(fpath).name}")
                         progress.update()
                         continue
 
-                    # Veri satırlarını yaz
                     row_count = 0
                     for row in reader:
+                        # Tüm hücreler boş veya yalnızca boşluktan oluşan satırları atla
+                        if not any(cell.strip() for cell in row):
+                            empty_rows += 1
+                            continue
                         writer.writerow(row)
                         row_count += 1
+
                     total_rows += row_count
 
             except Exception as e:
+                # Beklenmedik hata (izin sorunu, bozuk dosya vb.)
                 skipped_files.append((fpath, str(e)))
+                logging.error(f"Hata ({Path(fpath).name}): {e}")
 
             progress.update()
 
-    elapsed = time.time() - progress.start
+    # İşlem bitti; süre ve boyut istatistiklerini hesapla
+    elapsed  = time.time() - progress.start
     out_size = output_path.stat().st_size / 1024
 
-    print(f"\n🎉 Tamamlandı!")
-    print(f"   Birleştirilen dosya : {len(files) - len(skipped_files)}")
-    print(f"   Toplam veri satırı  : {total_rows:,}")
-    print(f"   Çıktı boyutu        : {out_size:.1f} KB")
-    print(f"   Süre                : {elapsed:.1f}s")
-    print(f"   Çıktı               : {output_path.resolve()}\n")
+    logging.info("Tamamlandı!")
+    logging.info(f"  Birleştirilen : {len(files) - len(skipped_files)} dosya")
+    logging.info(f"  Toplam satır  : {total_rows:,}")
+    logging.info(f"  Boş satır     : {empty_rows:,} (atlandı)")
+    logging.info(f"  Çıktı boyutu  : {out_size:.1f} KB")
+    logging.info(f"  Süre          : {elapsed:.1f}s")
+    logging.info(f"  Çıktı         : {output_path.resolve()}")
 
+    # Atlanan dosyalar varsa tek tek logla
     if skipped_files:
-        print(f"⚠️  Atlanan dosyalar ({len(skipped_files)}):")
+        logging.warning(f"Atlanan dosyalar ({len(skipped_files)}):")
         for f, reason in skipped_files:
-            print(f"   - {Path(f).name}: {reason}")
-        print()
+            logging.warning(f"  - {Path(f).name}: {reason}")
+
+    print(f"\n🎉 Tamamlandı! {total_rows:,} satır → {output_path}")
 
 
 def main():
+    """CLI argümanlarını ayrıştırır ve merge() işlevini çağırır."""
     parser = argparse.ArgumentParser(
         description="Birden fazla CSV dosyasını tek dosyada birleştir"
     )
     parser.add_argument(
         "-i", "--input",
-        default=".",
-        help="CSV dosyalarının bulunduğu klasör (varsayılan: script klasörü)"
+        default=DEFAULT_INPUT,
+        help=f"CSV dosyalarının bulunduğu klasör (varsayılan: {DEFAULT_INPUT})",
     )
     parser.add_argument(
         "-o", "--output",
         default=DEFAULT_OUTPUT,
-        help=f"Çıktı dosyası adı (varsayılan: {DEFAULT_OUTPUT})"
+        help=f"Çıktı dosyası adı (varsayılan: {DEFAULT_OUTPUT})",
     )
     parser.add_argument(
         "-p", "--pattern",
         default=DEFAULT_PATTERN,
-        help=f"Dosya deseni (varsayılan: {DEFAULT_PATTERN}, örnek: '11-*.csv')"
+        help=f"Dosya deseni (varsayılan: {DEFAULT_PATTERN}, örnek: '11-*.csv')",
     )
     parser.add_argument(
         "-e", "--encoding",
         default="utf-8",
-        help="Dosya encoding (varsayılan: utf-8)"
+        help="Sabit encoding (--auto-encoding kullanılmıyorsa, varsayılan: utf-8)",
+    )
+    parser.add_argument(
+        "--auto-encoding",
+        action="store_true",
+        help="Her dosya için encoding otomatik tespit et (chardet önerilir)",
+    )
+    parser.add_argument(
+        "--log",
+        default=LOG_FILE,
+        help=f"Log dosyası yolu (varsayılan: {LOG_FILE})",
     )
     args = parser.parse_args()
-    merge(args.input, args.output, args.pattern, args.encoding)
+    setup_logging(args.log)
+    merge(
+        input_dir=args.input,
+        output_file=args.output,
+        pattern=args.pattern,
+        encoding=args.encoding,
+        auto_encoding=args.auto_encoding,
+    )
 
 
 if __name__ == "__main__":

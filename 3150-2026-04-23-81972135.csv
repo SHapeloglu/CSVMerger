@@ -1,0 +1,5 @@
+email,validity,validSMTP,validIdentity,customData,jobId,reason,mxDomain,reasonCode
+iletisim@camsuplastik.com,valid,1,1,294,81972231,,camsuplastik-com.mail.protection.outlook.com,
+iletisim@entes.com.tr,unknown,,,295,81972232,,entes.com.tr,
+iletisim@goktepebilisim.com,unknown,,,296,81972233,,guzel.net.tr,
+iletisim@gunestv.com,invalid,,,297,81972234,invalid setup for email dns,,invalid_dns
