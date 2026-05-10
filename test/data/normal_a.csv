@@ -1,0 +1,3 @@
+email,validity,validSMTP,validIdentity,customData,jobId,reason,mxDomain,reasonCode
+test1@example.com,valid,1,1,1,JOB001,,mail.example.com,
+test2@example.com,invalid,,,2,JOB002,invalid dns,,invalid_dns

@@ -1,0 +1,3 @@
+email,validity,validSMTP,validIdentity,customData,jobId,reason,mxDomain,reasonCode
+test3@example.com,unknown,,,3,JOB003,,mx.example.com,
+test4@example.com,valid,1,1,4,JOB004,,mail.example.com,
