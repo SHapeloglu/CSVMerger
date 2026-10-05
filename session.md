@@ -1,50 +1,35 @@
-# session.md — 📊 CSV Merger & MySQL Aktarıcı Oturum Günlüğü
+# session.md — CSV Merger Oturum Günlüğü
 
-Her çalışma oturumunda buraya kısa bir kayıt düşülür: ne yapıldı, hangi kararlar alındı, sıradaki adım ne. Amaç, bir sonraki oturuma (veya başka bir geliştiriciye/Claude örneğine) hızlıca bağlam aktarmak.
-
----
-
-## Şablon
-
-```markdown
-## YYYY-AA-GG
-
-**Yapılanlar:**
-- ...
-
-**Alınan kararlar / neden:**
-- ...
-
-**Açık sorunlar / bilinen eksikler:**
-- ...
-
-**Sıradaki adım:**
-- ...
-```
+Her oturum sonunda en üste yeni kayıt ekle.
 
 ---
 
 ## 2026-10-05
 
 **Yapılanlar:**
-- Eksik proje çalışma dosyaları oluşturuldu: `architect.md`, `backlog.md`, `CLAUDE.md`, `session.md`, `task.md`.
-- İçerik; README, dosya yapısı, bağımlılık dosyaları ve git geçmişinden çıkarıldı.
+- Şablondan üretilmiş çalışma dosyaları kod okunarak yeniden yazıldı.
+- `pytest -q test` → 13 passed.
 
-**Açık sorunlar / bilinen eksikler:**
-- Belirgin bir sorun tespit edilmedi.
+**Tespitler:**
+- `csv_to_mysql.py` test edilmiyor.
+- `birlesik_cikti.csv` ignore edilmiş olmasına rağmen izleniyor; örnek CSV'ler kökte ve `source/`'ta tekrarlı.
 
-**Sıradaki adım:**
-- `CLAUDE.md` ve `architect.md` içeriğini gözden geçirip proje sahibinin bilgisiyle tamamla.
+**Sıradaki adım:** `task.md` → "Sıradaki".
 
-### Bu tarihten önceki son commit'ler (referans)
+---
 
-- 2026-05-17 — Add files via upload
-- 2026-05-10 — Add files via upload
-- 2026-05-10 — Create blank_rows.csv
-- 2026-05-10 — Add files via upload
-- 2026-05-10 — Create test_merge.py
-- 2026-05-10 — Add files via upload
-- 2026-05-10 — Add files via upload
-- 2026-05-03 — Add files via upload
-- 2026-05-03 — Create ornek.csv
-- 2026-05-03 — Add files via upload
+## 2026-05-03 → 2026-05-17
+
+- GitHub web arayüzünden yüklemeler: ilk sürüm (05-03), test altyapısı ve test verileri (05-10), son güncelleme (05-17). Ayrıntılı oturum kaydı yok.
+
+---
+
+### Kayıt Şablonu
+
+```markdown
+## YYYY-AA-GG
+**Yapılanlar:** ...
+**Kararlar / neden:** ...
+**Açık sorunlar:** ...
+**Sıradaki adım:** ...
+```

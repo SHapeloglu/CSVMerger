@@ -1,21 +1,17 @@
-# backlog.md — 📊 CSV Merger & MySQL Aktarıcı Fikir / Özellik Havuzu
+# backlog.md — CSV Merger Fikir Havuzu
 
-Bu dosya henüz önceliklendirilmemiş, "bir gün yapılabilir" fikirler ve özellik talepleri içindir. Bir fikir somutlaşıp sıraya girdiğinde buradan çıkar, `task.md`ye taşınır.
-
-## Fikirler
-
-_(henüz boş — yeni bir fikir geldiğinde aşağıdaki şablonla ekle)_
-
-## Koddaki TODO / FIXME Notları
-
-_(kodda TODO/FIXME notu bulunamadı)_
+- `ensure_table` için şema farkı tespiti: eksik kolonları `ALTER TABLE ADD COLUMN` ile ekle (onaylı).
+- Birleştirmede e-posta bazlı tekilleştirme seçeneği (`--dedupe email`).
+- `COLUMN_MAP`'i harici YAML/JSON'dan okuma — farklı doğrulama sağlayıcılarının CSV formatları için.
+- `--dry-run`: MySQL'e yazmadan kaç satır ekleneceğini / atlanacağını raporla.
+- PostgreSQL / SQLite hedefi.
+- Paketleme: `pyproject.toml` + `csvmerge` / `csv2mysql` konsol komutları.
 
 ## Ekleme Şablonu
 
 ```markdown
 ### Başlık
-
 - **Kategori:** yeni özellik / iyileştirme / teknik borç / araştırma
-- **Neden istendi:** kısa gerekçe
-- **Notlar:** büyüklük tahmini, bağımlılıklar, riskler
+- **Neden:** kısa gerekçe
+- **Notlar:** büyüklük, bağımlılıklar, riskler
 ```
